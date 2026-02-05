@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { appConfig, isChainConfigured } from "../../../lib/config";
+import { isChainConfigured } from "../../../lib/config";
 import { createSuiClient } from "../../../lib/sui";
 import { parseContentObject } from "../../../lib/chain";
 

@@ -1,18 +1,45 @@
-type SuiMoveField = string | number | boolean | null | undefined | Record<string, any>;
+type SuiMoveField =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | Record<string, unknown>
+  | unknown[];
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const getBytesField = (value: Record<string, unknown>): unknown => {
+  const fields = value.fields;
+  if (isRecord(fields) && "bytes" in fields) {
+    return fields.bytes;
+  }
+  if ("bytes" in value) {
+    return value.bytes;
+  }
+  return undefined;
+};
 
 const decodeStringField = (value: SuiMoveField): string => {
   if (typeof value === "string") {
     return value;
   }
-  if (!value || typeof value !== "object") {
+  if (!value || !isRecord(value)) {
     return "";
   }
-  const bytes = (value as any).fields?.bytes ?? (value as any).bytes;
+  const bytes = getBytesField(value);
   if (!bytes) {
     return "";
   }
   if (Array.isArray(bytes)) {
-    return new TextDecoder().decode(Uint8Array.from(bytes));
+    const numericBytes = bytes.filter(
+      (item): item is number => typeof item === "number"
+    );
+    if (numericBytes.length === 0) {
+      return "";
+    }
+    return new TextDecoder().decode(Uint8Array.from(numericBytes));
   }
   if (typeof bytes === "string") {
     if (bytes.startsWith("0x")) {
@@ -22,11 +49,14 @@ const decodeStringField = (value: SuiMoveField): string => {
       return new TextDecoder().decode(Uint8Array.from(arr));
     }
     try {
-      const arr = Uint8Array.from(Buffer.from(bytes, "base64"));
-      return new TextDecoder().decode(arr);
+      if (typeof Buffer !== "undefined") {
+        const arr = Uint8Array.from(Buffer.from(bytes, "base64"));
+        return new TextDecoder().decode(arr);
+      }
     } catch {
-      return bytes;
+      // ignore decode failure
     }
+    return bytes;
   }
   return "";
 };
@@ -39,41 +69,64 @@ const toNumber = (value: SuiMoveField): number => {
 
 const normalizeId = (value: SuiMoveField): string => {
   if (typeof value === "string") return value;
-  if (value && typeof value === "object" && "id" in value) {
-    return (value as any).id;
+  if (isRecord(value) && typeof value.id === "string") {
+    return value.id;
+  }
+  if (isRecord(value) && typeof value.bytes === "string") {
+    return value.bytes;
   }
   return "";
 };
 
 const normalizeVector = (value: SuiMoveField): string[] => {
   if (Array.isArray(value)) {
-    return value.map((item) => normalizeId(item)).filter(Boolean);
+    return value.map((item) => normalizeId(item as SuiMoveField)).filter(Boolean);
   }
-  if (value && typeof value === "object" && "fields" in value) {
-    const inner = (value as any).fields?.contents ?? (value as any).fields?.vec;
+  if (isRecord(value) && isRecord(value.fields)) {
+    const inner = value.fields.contents ?? value.fields.vec;
     if (Array.isArray(inner)) {
-      return inner.map((item: any) => normalizeId(item)).filter(Boolean);
+      return inner
+        .map((item) => normalizeId(item as SuiMoveField))
+        .filter(Boolean);
     }
   }
   return [];
 };
 
-export const parseContentObject = (object: any) => {
-  const fields = object?.content?.fields ?? object?.fields ?? {};
+const getObjectFields = (object: unknown): Record<string, unknown> => {
+  if (!isRecord(object)) return {};
+  if (isRecord(object.content) && isRecord(object.content.fields)) {
+    return object.content.fields;
+  }
+  if (isRecord(object.fields)) {
+    return object.fields;
+  }
+  return {};
+};
+
+const getObjectId = (object: unknown): string => {
+  if (!isRecord(object)) return "";
+  if (typeof object.objectId === "string") return object.objectId;
+  if (typeof object.id === "string") return object.id;
+  return "";
+};
+
+export const parseContentObject = (object: unknown) => {
+  const fields = getObjectFields(object);
   return {
-    objectId: object?.objectId ?? object?.id,
-    title: decodeStringField(fields.title),
-    description: decodeStringField(fields.description),
-    pdfUri: decodeStringField(fields.pdf_uri),
-    ratePer10s: toNumber(fields.rate_per_10s),
-    creator: fields.creator ?? "",
-    vaultId: normalizeId(fields.vault_id),
-    createdAtMs: toNumber(fields.created_at_ms),
+    objectId: getObjectId(object),
+    title: decodeStringField(fields.title as SuiMoveField),
+    description: decodeStringField(fields.description as SuiMoveField),
+    pdfUri: decodeStringField(fields.pdf_uri as SuiMoveField),
+    ratePer10s: toNumber(fields.rate_per_10s as SuiMoveField),
+    creator: typeof fields.creator === "string" ? fields.creator : "",
+    vaultId: normalizeId(fields.vault_id as SuiMoveField),
+    createdAtMs: toNumber(fields.created_at_ms as SuiMoveField),
     tags: [],
   };
 };
 
-export const parsePlatformContentIds = (object: any) => {
-  const fields = object?.content?.fields ?? object?.fields ?? {};
-  return normalizeVector(fields.contents);
+export const parsePlatformContentIds = (object: unknown) => {
+  const fields = getObjectFields(object);
+  return normalizeVector(fields.contents as SuiMoveField);
 };

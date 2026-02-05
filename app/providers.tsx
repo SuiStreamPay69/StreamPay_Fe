@@ -1,8 +1,11 @@
 "use client";
 
-import { PropsWithChildren, useEffect, useState } from "react";
+import type { ComponentType, PropsWithChildren } from "react";
+import { useEffect, useState } from "react";
+import type { DAppKit } from "@mysten/dapp-kit-core";
 import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { DAppKitReadyContext } from "./lib/dappkit";
+import type { DAppKitProviderProps } from "@mysten/dapp-kit-react";
 
 const SUPPORTED_NETWORKS = ["devnet", "testnet", "mainnet", "localnet"] as const;
 type Network = (typeof SUPPORTED_NETWORKS)[number];
@@ -17,8 +20,12 @@ const resolveNetwork = (): Network => {
 };
 
 export default function Providers({ children }: PropsWithChildren) {
-  const [dAppKit, setDAppKit] = useState<any>(null);
-  const [Provider, setProvider] = useState<any>(null);
+  const [dAppKit, setDAppKit] = useState<
+    DAppKit<(typeof SUPPORTED_NETWORKS)[number][], SuiJsonRpcClient> | null
+  >(null);
+  const [Provider, setProvider] = useState<ComponentType<DAppKitProviderProps> | null>(
+    null
+  );
 
   useEffect(() => {
     let mounted = true;

@@ -1,13 +1,31 @@
 import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { appConfig } from "./config";
 
-export const createSuiClient = () =>
-  new SuiJsonRpcClient({
-    network: appConfig.network as any,
-    url: getJsonRpcFullnodeUrl(appConfig.network as any),
-  });
+type SupportedNetwork = "mainnet" | "testnet" | "devnet" | "localnet";
 
-export const MIST_PER_SUI = 1_000_000_000n;
+const resolveNetwork = (network: string): SupportedNetwork => {
+  const normalized = network.toLowerCase().trim();
+  const supported: SupportedNetwork[] = [
+    "mainnet",
+    "testnet",
+    "devnet",
+    "localnet",
+  ];
+  if (supported.includes(normalized as SupportedNetwork)) {
+    return normalized as SupportedNetwork;
+  }
+  return "testnet";
+};
+
+export const createSuiClient = () => {
+  const network = resolveNetwork(appConfig.network);
+  return new SuiJsonRpcClient({
+    network,
+    url: getJsonRpcFullnodeUrl(network),
+  });
+};
+
+export const MIST_PER_SUI = BigInt(1_000_000_000);
 
 export const parseSuiToMist = (value: number | string) => {
   const raw = typeof value === "number" ? value.toString() : value;

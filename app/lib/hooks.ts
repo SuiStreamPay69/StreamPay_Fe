@@ -35,22 +35,27 @@ export const useContentCatalog = () => {
 
 export const useContentItem = (id: string) => {
   const [item, setItem] = useState<ContentItem | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(id));
 
   useEffect(() => {
-    if (!id) {
-      setLoading(false);
-      return;
-    }
     let mounted = true;
     const load = async () => {
+      if (!id) {
+        if (mounted) {
+          setItem(null);
+          setLoading(false);
+        }
+        return;
+      }
+      if (mounted) {
+        setLoading(true);
+      }
       try {
         const response = await fetch(`/api/content/${id}`);
         if (response.ok) {
           const data = await response.json();
-          if (mounted && data?.item) {
-            setItem(data.item);
-            return;
+          if (mounted) {
+            setItem(data?.item ?? null);
           }
         }
       } catch {

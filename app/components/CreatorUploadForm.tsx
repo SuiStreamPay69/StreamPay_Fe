@@ -34,11 +34,10 @@ export default function CreatorUploadForm() {
   const verifyPlatform = async () => {
     if (!client) return { ok: false, message: "Sui client not ready." };
     try {
-      const obj = await client.getObject({
-        id: appConfig.platformId,
-        options: { showType: true },
+      const obj = await client.core.getObject({
+        objectId: appConfig.platformId,
       });
-      const objectType = obj.data?.type ?? "";
+      const objectType = obj.object?.type ?? "";
       const expectedPrefix = `${appConfig.packageId}::${appConfig.moduleName}::Platform`;
       if (!objectType.startsWith(expectedPrefix)) {
         return {
@@ -126,16 +125,25 @@ export default function CreatorUploadForm() {
 
         const result = await dappKit.signAndExecuteTransaction({
           transaction: tx,
-          options: { showObjectChanges: true, showEffects: true },
         });
-        const created =
-          result?.objectChanges?.find(
-            (change: any) =>
-              change.type === "created" &&
-              change.objectType?.includes("::streampay_sc::Content")
-          ) ?? null;
-        if (created?.objectId) {
-          setPublishedId(created.objectId);
+        const txResult =
+          result.$kind === "Transaction" ? result.Transaction : result.FailedTransaction;
+        const createdIds =
+          txResult.effects?.changedObjects
+            ?.filter((change) => change.idOperation === "Created")
+            .map((change) => change.objectId) ?? [];
+        if (client && createdIds.length > 0) {
+          const expectedPrefix = `${appConfig.packageId}::${appConfig.moduleName}::Content`;
+          for (const objectId of createdIds) {
+            try {
+              const createdObj = await client.core.getObject({ objectId });
+              const objectType = createdObj.object?.type ?? "";
+              if (objectType.startsWith(expectedPrefix)) {
+                setPublishedId(objectId);
+                break;
+              }
+            } catch {}
+          }
         }
       }
 

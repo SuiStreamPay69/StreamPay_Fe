@@ -10,7 +10,7 @@ import {
 } from "@mysten/dapp-kit-react";
 import type { ContentItem } from "../lib/content";
 import { appConfig, isChainConfigured } from "../lib/config";
-import { formatMistToSui, parseSuiToMist } from "../lib/sui";
+import { parseSuiToMist } from "../lib/sui";
 
 type Props = {
   item: ContentItem;
@@ -25,11 +25,33 @@ const formatAmount = (value: number) =>
 
 const CLOCK_OBJECT_ID = "0x6";
 
-const parseBalance = (balanceField: any) => {
-  if (!balanceField) return 0n;
-  const fields = balanceField.fields ?? balanceField;
-  const raw = fields?.value ?? 0;
-  return BigInt(raw.toString());
+const ZERO_BIGINT = BigInt(0);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const parseBalance = (balanceField: unknown) => {
+  if (!balanceField) return ZERO_BIGINT;
+  const fields =
+    isRecord(balanceField) && isRecord(balanceField.fields)
+      ? balanceField.fields
+      : isRecord(balanceField)
+      ? balanceField
+      : null;
+  const raw = fields && "value" in fields ? fields.value : 0;
+  try {
+    return BigInt(String(raw ?? 0));
+  } catch {
+    return ZERO_BIGINT;
+  }
+};
+
+const parseBigInt = (value: unknown) => {
+  try {
+    return BigInt(String(value ?? 0));
+  } catch {
+    return ZERO_BIGINT;
+  }
 };
 
 type HistoryEntry = {
@@ -49,8 +71,8 @@ export default function ReaderClient({ item, initialDeposit }: Props) {
   const client = useCurrentClient();
 
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [chainBalance, setChainBalance] = useState<bigint>(0n);
-  const [chainSpent, setChainSpent] = useState<bigint>(0n);
+  const [chainBalance, setChainBalance] = useState<bigint>(ZERO_BIGINT);
+  const [chainSpent, setChainSpent] = useState<bigint>(ZERO_BIGINT);
   const [chainStatus, setChainStatus] = useState<number | null>(null);
   const [chainStreamedMs, setChainStreamedMs] = useState(0);
   const [chainLastCheckpointMs, setChainLastCheckpointMs] = useState<number | null>(
@@ -73,17 +95,17 @@ export default function ReaderClient({ item, initialDeposit }: Props) {
   const [topUpAmount, setTopUpAmount] = useState(0.05);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
 
-  const normalizeId = (value: any) => {
+  const normalizeId = (value: unknown) => {
     if (!value) return "";
     if (typeof value === "string") return value;
-    if (typeof value === "object") {
+    if (isRecord(value)) {
       if (typeof value.id === "string") return value.id;
       if (typeof value.bytes === "string") return value.bytes;
     }
     return String(value);
   };
 
-  const normalizeObjectId = (value: any) => {
+  const normalizeObjectId = (value: unknown) => {
     const raw = normalizeId(value);
     if (!raw) return "";
     if (raw.startsWith("0x")) return raw;
@@ -101,8 +123,8 @@ export default function ReaderClient({ item, initialDeposit }: Props) {
 
   useEffect(() => {
     setSessionId(null);
-    setChainBalance(0n);
-    setChainSpent(0n);
+    setChainBalance(ZERO_BIGINT);
+    setChainSpent(ZERO_BIGINT);
     setChainStatus(null);
     setChainStreamedMs(0);
     setChainLastCheckpointMs(null);
@@ -119,13 +141,13 @@ export default function ReaderClient({ item, initialDeposit }: Props) {
 
   const refreshSession = async (id = sessionId) => {
     if (!id || !client) return;
-    const result = await client.getObject({
-      id,
-      options: { showContent: true },
+    const result = await client.core.getObject({
+      objectId: id,
+      include: { json: true },
     });
-    const fields = result.data?.content?.fields ?? {};
+    const fields = result.object?.json ?? {};
     setChainBalance(parseBalance(fields.deposit_balance));
-    setChainSpent(BigInt(fields.total_spent ?? 0));
+    setChainSpent(parseBigInt(fields.total_spent));
     setChainStatus(Number(fields.status ?? 0));
     setChainStreamedMs(Number(fields.total_streamed_ms ?? 0));
     const checkpointMs =
@@ -143,15 +165,15 @@ export default function ReaderClient({ item, initialDeposit }: Props) {
   const findLatestSession = async () => {
     if (!client || !account) return null;
     const type = `${appConfig.packageId}::${appConfig.moduleName}::Session`;
-    const owned = await client.getOwnedObjects({
+    const owned = await client.core.listOwnedObjects({
       owner: account.address,
-      filter: { StructType: type },
-      options: { showContent: true },
+      type,
+      include: { json: true },
     });
-    const matches = owned.data
+    const matches = owned.objects
       .map((entry) => ({
-        id: entry.data?.objectId,
-        fields: entry.data?.content?.fields,
+        id: entry.objectId,
+        fields: entry.json ?? {},
       }))
       .filter((entry) => entry.id && entry.fields)
       .filter((entry) => {
@@ -217,18 +239,18 @@ export default function ReaderClient({ item, initialDeposit }: Props) {
   const demoStatus = deposit <= 0 ? "Paused" : running ? "Active" : "Idle";
   const chainIsActive = chainStatus === 1 || sessionStarted;
   const chainSnapshotReady =
-    chainStatus !== null || chainBalance > 0n || chainSpent > 0n;
+    chainStatus !== null || chainBalance > ZERO_BIGINT || chainSpent > ZERO_BIGINT;
   const useLocalFallback =
     sessionStartLocalMs !== null &&
     chainIsActive &&
-    chainBalance === 0n &&
-    chainSpent === 0n;
+    chainBalance === ZERO_BIGINT &&
+    chainSpent === ZERO_BIGINT;
   const chainBalanceSui = Number(chainBalance) / 1_000_000_000;
   const chainSpentSui = Number(chainSpent) / 1_000_000_000;
   const baseBalanceSui =
     useLocalFallback
       ? deposit
-      : chainBalance > 0n || chainSnapshotReady
+      : chainBalance > ZERO_BIGINT || chainSnapshotReady
       ? chainBalanceSui
       : deposit;
   const checkpointMs =
@@ -307,26 +329,41 @@ export default function ReaderClient({ item, initialDeposit }: Props) {
 
       const result = await dappKit.signAndExecuteTransaction({
         transaction: tx,
-        options: { showObjectChanges: true, showEffects: true },
       });
 
-      const created =
-        result?.objectChanges?.find(
-          (change: any) =>
-            change.type === "created" &&
-            change.objectType?.includes("::streampay_sc::Session")
-        ) ?? null;
+      let createdSessionId: string | null = null;
+      if (client) {
+        const txResult =
+          result.$kind === "Transaction" ? result.Transaction : result.FailedTransaction;
+        const createdIds =
+          txResult.effects?.changedObjects
+            ?.filter((change) => change.idOperation === "Created")
+            .map((change) => change.objectId) ?? [];
+        if (createdIds.length > 0) {
+          const expectedPrefix = `${appConfig.packageId}::${appConfig.moduleName}::Session`;
+          for (const objectId of createdIds) {
+            try {
+              const createdObj = await client.core.getObject({ objectId });
+              const objectType = createdObj.object?.type ?? "";
+              if (objectType.startsWith(expectedPrefix)) {
+                createdSessionId = objectId;
+                break;
+              }
+            } catch {}
+          }
+        }
+      }
 
-      if (created?.objectId) {
-        setSessionId(created.objectId);
+      if (createdSessionId) {
+        setSessionId(createdSessionId);
         setSessionStarted(true);
         setChainStatus(1);
         setChainBalance(amountMist);
-        setChainSpent(0n);
+        setChainSpent(ZERO_BIGINT);
         setChainStreamedMs(0);
         setChainLastCheckpointMs(Date.now());
         setSessionStartLocalMs(Date.now());
-        await refreshSession(created.objectId);
+        await refreshSession(createdSessionId);
       } else {
         const latest = await findLatestSession();
         if (latest?.id) {
@@ -334,7 +371,7 @@ export default function ReaderClient({ item, initialDeposit }: Props) {
           setSessionStarted(true);
           setChainStatus(1);
           setChainBalance(amountMist);
-          setChainSpent(0n);
+          setChainSpent(ZERO_BIGINT);
           setChainStreamedMs(0);
           setChainLastCheckpointMs(Date.now());
           setSessionStartLocalMs(Date.now());
@@ -344,8 +381,8 @@ export default function ReaderClient({ item, initialDeposit }: Props) {
     } catch {
       setSessionStarted(false);
       setChainStatus(null);
-      setChainBalance(0n);
-      setChainSpent(0n);
+      setChainBalance(ZERO_BIGINT);
+      setChainSpent(ZERO_BIGINT);
       setChainStreamedMs(0);
       setChainLastCheckpointMs(null);
       setSessionStartLocalMs(null);
@@ -369,7 +406,6 @@ export default function ReaderClient({ item, initialDeposit }: Props) {
       });
       await dappKit.signAndExecuteTransaction({
         transaction: tx,
-        options: { showEffects: true },
       });
       await refreshSession();
     } finally {
@@ -394,7 +430,6 @@ export default function ReaderClient({ item, initialDeposit }: Props) {
       });
       await dappKit.signAndExecuteTransaction({
         transaction: tx,
-        options: { showEffects: true },
       });
       await refreshSession();
     } finally {
@@ -427,7 +462,6 @@ export default function ReaderClient({ item, initialDeposit }: Props) {
       });
       await dappKit.signAndExecuteTransaction({
         transaction: tx,
-        options: { showEffects: true },
       });
       await refreshSession();
       setHistory((prev) => [
